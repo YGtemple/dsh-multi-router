@@ -1,3 +1,4 @@
+
 /**
  * WorkBuddy (CodeBuddy / copilot.tencent.com) upstream client: chat streaming,
  * token refresh, model catalog, and credit balance. The wire behavior is
@@ -7,6 +8,7 @@
  * @module dsh-workbuddy-connect/upstream
  */
 
+import { randomUUID } from 'node:crypto'
 import { appUserAgent, resolveAppVersion, type AppVersionInfo } from './app-version.ts'
 import { chatUserAgent, fallbackChatIdentity, resolveChatIdentity, type ChatIdentity } from './client-identity.ts'
 import type { WorkBuddyCredential } from './auth.ts'
@@ -440,7 +442,27 @@ function commonHeaders(credential: WorkBuddyCredential): Record<string, string> 
  * chat and probe requests. Refresh shares `commonHeaders` but never this
  * override, so the two paths cannot drift into each other.
  */
-function chatHeaders(credential: WorkBuddyCredential, userAgent: string, clientVersion: string): Record<string, string> {
+/**
+ * Conversation-id triple the global gateway requires on chat requests.
+ *
+ * Every turn carries its own ids, exactly as the real desktop client does.
+ * The CN endpoint does not ask for them; `chatHeaders` takes `international`
+ * so the two regions cannot drift into the same header set.
+ */
+function conversationHeaders(): Record<string, string> {
+  return {
+    'X-Conversation-ID': randomUUID(),
+    'X-Conversation-Request-ID': randomUUID(),
+    'X-Conversation-Message-ID': randomUUID(),
+  }
+}
+
+function chatHeaders(
+  credential: WorkBuddyCredential,
+  userAgent: string,
+  clientVersion: string,
+  international = false,
+): Record<string, string> {
   const headers: Record<string, string> = {
     ...commonHeaders(credential),
     'User-Agent': userAgent,
@@ -455,6 +477,7 @@ function chatHeaders(credential: WorkBuddyCredential, userAgent: string, clientV
     'X-IDE-Name': 'WorkBuddy',
     'X-IDE-Version': clientVersion,
     'X-Product': 'SaaS',
+    ...international ? conversationHeaders() : {},
   }
   return headers
 }
@@ -786,7 +809,7 @@ export class WorkBuddyUpstreamClient {
     try {
       response = await fetch(`${chatBase(credential)}/v2/chat/completions`, {
         method: 'POST',
-        headers: { ...chatHeaders(credential, userAgent, identity.clientVersion), 'Authorization': `Bearer ${credential.accessToken}` },
+        headers: { ...chatHeaders(credential, userAgent, identity.clientVersion, region === 'global'), 'Authorization': `Bearer ${credential.accessToken}` },
         body: region === 'global' ? prepareInternationalChatBody(bodyJson) : prepareCnChatBody(bodyJson),
         ...signal === undefined ? {} : { signal },
       })
@@ -1172,7 +1195,7 @@ export class WorkBuddyUpstreamClient {
     try {
       response = await fetch(`${chatBase(credential)}/v2/chat/completions`, {
         method: 'POST',
-        headers: { ...chatHeaders(credential, userAgent, identity.clientVersion), 'Authorization': `Bearer ${credential.accessToken}` },
+        headers: { ...chatHeaders(credential, userAgent, identity.clientVersion, region === 'global'), 'Authorization': `Bearer ${credential.accessToken}` },
         body: JSON.stringify(payload),
         signal,
       })
